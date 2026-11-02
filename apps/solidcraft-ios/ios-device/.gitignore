@@ -1,2 +1,4 @@
 build/
 SolidCraft.xcodeproj/
+out/
+build.log
