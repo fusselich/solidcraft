@@ -2,8 +2,7 @@
 //!
 //! Runs the same [`solidcraft_ui_egui::SolveApp`] as the desktop app through eframe's native
 //! runner; winit's iOS backend supplies the UIKit window and touch/Pencil events, wgpu draws with
-//! Metal. Stage 1: the app starts with the sample part; Files-app integration, Pencil gestures and
-//! scaling follow.
+//! Metal.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod files;
@@ -13,6 +12,7 @@ mod ai;
 mod ai_data;
 #[cfg(target_os = "ios")]
 mod keyboard;
+mod numpad;
 #[cfg(target_os = "ios")]
 mod pencil;
 #[cfg(target_os = "ios")]
@@ -34,6 +34,7 @@ struct App {
     ai_view: Option<(solidcraft_engine::render::Camera, solidcraft_engine::render::Camera)>,
     frames: u32,
     synced_at: f64,
+    numpad: numpad::Numpad,
 }
 
 impl eframe::App for App {
@@ -99,6 +100,8 @@ impl eframe::App for App {
             }
         }
         self.solve.raw_input_hook(raw);
+        // Taps on the number pad become the text and keys they stand for.
+        self.numpad.take_presses(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // Inside the status bar, the home indicator and any rounded corners.
@@ -116,9 +119,15 @@ impl eframe::App for App {
         let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(safe));
         inner.set_clip_rect(safe);
         self.solve.ui(&mut inner);
-        // Number fields ask for the number keyboard.
+        // Number fields get the app's number pad (an iPad has no number keyboard); ABC on it
+        // gives the field the system keyboard, in its numbers layout.
+        let numeric = solidcraft_ui_egui::numeric_focus(ui.ctx());
+        let _pad = self.numpad.show(ui.ctx(), safe, numeric);
         #[cfg(target_os = "ios")]
-        keyboard::set_numeric(solidcraft_ui_egui::numeric_focus(ui.ctx()));
+        {
+            keyboard::set_numpad(_pad);
+            keyboard::set_numeric(numeric);
+        }
         self.files.show(ui.ctx());
         #[cfg(target_os = "ios")]
         // The AI window rides above a docked keyboard.
@@ -229,9 +238,7 @@ fn run() -> eframe::Result {
                 app.set_wgpu(rs, DEPTH_BITS, 0, rs.msaa_samples);
                 solidcraft_ui_egui::gpu::install_picture_renderer(rs);
             }
-            if let Err(e) = app.session.run_script(&solidcraft_engine::sample::script()) {
-                app.set_status(format!("sample: {e}"), true);
-            }
+            // The app opens on an empty design (no sample part).
             note("app created");
             Ok(Box::new(App {
                 solve: app,
@@ -242,6 +249,7 @@ fn run() -> eframe::Result {
                 ai_view: None,
                 frames: 0,
                 synced_at: 0.0,
+                numpad: numpad::Numpad::default(),
             }))
         }),
     )

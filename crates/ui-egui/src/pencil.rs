@@ -32,8 +32,8 @@ pub struct Pencil {
     rejected: Vec<TouchId>,
     /// The one-finger gesture in progress.
     finger: Option<Finger>,
-    /// The touch whose emulated pointer events egui-winit sends next, and whether they pass.
-    owner: Option<(TouchId, bool)>,
+    /// The touch whose emulated pointer events egui-winit sends next, and which of them pass.
+    owner: Option<(TouchId, Pass)>,
     /// Events held back for the next frame (a tap's release).
     later: Vec<Event>,
     /// One-finger travel still to orbit by (points) and where the finger landed.
@@ -45,6 +45,18 @@ pub struct Pencil {
     pub(crate) busy: bool,
     /// The keyboard's modifiers, as last seen.
     modifiers: egui::Modifiers,
+}
+
+/// Which of egui-winit's emulated pointer events for a touch reach egui.
+#[derive(Clone, Copy, PartialEq)]
+enum Pass {
+    /// All of them: a finger on a panel (buttons, scrolling lists).
+    All,
+    /// Only where the pointer is: a finger on the view. The camera gestures need the pointer
+    /// over the view (`navigation::handle`), but its press would select or drag.
+    Moves,
+    /// None: the pencil (its pointer is emulated here) and a rejected palm.
+    Nothing,
 }
 
 struct Finger {
@@ -98,14 +110,21 @@ impl Pencil {
                         self.track_finger(id, device_id, phase, pos);
                         out.push(event);
                     } else if pencil {
-                        self.owner = Some((id, false));
+                        self.owner = Some((id, Pass::Nothing));
                         self.pencil_touch(id, phase, pos, mods, &mut out);
                     } else {
                         self.finger_touch(event, now, mods, &on_view, &mut out);
                     }
                 }
                 Event::PointerMoved(_) | Event::PointerButton { .. } | Event::PointerGone if self.owner.is_some() => {
-                    if self.owner.is_some_and(|(_, pass)| pass) {
+                    let pass = match (self.owner.map(|(_, p)| p), &event) {
+                        (Some(Pass::All), _) => true,
+                        (Some(Pass::Moves), Event::PointerMoved(_)) => true,
+                        // A tap's click is still to come (`later`): the pointer stays for it.
+                        (Some(Pass::Moves), Event::PointerGone) => self.later.is_empty(),
+                        _ => false,
+                    };
+                    if pass {
                         out.push(event);
                     }
                 }
@@ -188,24 +207,23 @@ impl Pencil {
             if matches!(phase, TouchPhase::End | TouchPhase::Cancel) {
                 self.rejected.retain(|r| *r != id);
             }
-            self.owner = Some((id, false));
+            self.owner = Some((id, Pass::Nothing));
             return;
         }
         self.track_finger(id, device_id, phase, pos);
-        let mut pass = false;
+        let mut on_ui = false;
         match phase {
             TouchPhase::Start => {
                 if let Some(f) = &mut self.finger {
                     f.multi = true;
                 } else if self.fingers.len() == 1 {
-                    let on_ui = !on_view(pos);
-                    pass = on_ui;
+                    on_ui = !on_view(pos);
                     self.finger = Some(Finger { id, start: pos, last: pos, at: now, moved: false, multi: false, held: false, on_ui });
                 }
             }
             TouchPhase::Move => {
                 if let Some(f) = self.finger.as_mut().filter(|f| f.id == id) {
-                    pass = f.on_ui;
+                    on_ui = f.on_ui;
                     if !f.moved && (pos - f.start).length() > SLOP {
                         f.moved = true;
                     }
@@ -218,7 +236,7 @@ impl Pencil {
             }
             TouchPhase::End | TouchPhase::Cancel => {
                 if let Some(f) = self.finger.take_if(|f| f.id == id) {
-                    pass = f.on_ui;
+                    on_ui = f.on_ui;
                     // A tap on the view selects what it landed on, as a click there.
                     if phase == TouchPhase::End && !f.on_ui && !f.moved && !f.multi && !f.held {
                         let button = egui::PointerButton::Primary;
@@ -230,7 +248,7 @@ impl Pencil {
                 }
             }
         }
-        self.owner = Some((id, pass));
+        self.owner = Some((id, if on_ui { Pass::All } else { Pass::Moves }));
         out.push(event);
     }
 }
@@ -300,6 +318,19 @@ mod tests {
         assert!(p.menu.is_some(), "holding still opens the menu");
         let out = run(&mut p, 1.7, vec![touch(2, TouchPhase::End, 10.0, false)]);
         assert_eq!(presses(&out), 0, "a long press is no tap");
+    }
+
+    #[test]
+    fn a_finger_on_the_view_still_moves_the_pointer_so_two_finger_gestures_work() {
+        let mut p = Pencil { enabled: true, active: true, ..Default::default() };
+        let at = egui::pos2(10.0, 100.0);
+        let out = run(&mut p, 0.0, vec![touch(1, TouchPhase::Start, 10.0, false), Event::PointerMoved(at), press(10.0, true)]);
+        assert!(out.contains(&Event::PointerMoved(at)), "the pointer follows the finger onto the view");
+        assert_eq!(presses(&out), 0, "but presses nothing");
+        let out = run(&mut p, 0.1, vec![touch(2, TouchPhase::Start, 90.0, false), touch(1, TouchPhase::Move, 30.0, false), Event::PointerMoved(egui::pos2(30.0, 100.0))]);
+        assert_eq!(out.iter().filter(|e| matches!(e, Event::Touch { .. })).count(), 2, "both fingers reach egui's multi-touch");
+        assert!(out.contains(&Event::PointerMoved(egui::pos2(30.0, 100.0))));
+        assert_eq!(p.orbit, Vec2::ZERO, "two fingers do not orbit");
     }
 
     #[test]

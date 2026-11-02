@@ -7,7 +7,7 @@
 #![allow(unsafe_code)]
 use std::cell::RefCell;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicIsize, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use objc2::ffi::{class_addMethod, class_getInstanceMethod, method_setImplementation};
@@ -29,6 +29,8 @@ static INSERT_TEXT: OnceLock<Imp> = OnceLock::new();
 static CTX: OnceLock<egui::Context> = OnceLock::new();
 
 static KEYBOARD_TYPE: AtomicIsize = AtomicIsize::new(DEFAULT);
+/// The app's number pad stands in for the keyboard: the view offers an empty input view.
+static NUMPAD: AtomicBool = AtomicBool::new(false);
 /// The height (points, `f32` bits) of a docked keyboard over the screen's bottom; 0 when it is
 /// hidden, floating or split.
 static COVERED: AtomicU32 = AtomicU32::new(0);
@@ -36,6 +38,23 @@ static COVERED: AtomicU32 = AtomicU32::new(0);
 thread_local! {
     static OBSERVERS: RefCell<Vec<Retained<objc2::runtime::ProtocolObject<dyn NSObjectProtocol>>>> = const { RefCell::new(Vec::new()) };
     static INSTALLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The empty view offered as the keyboard while the number pad is up.
+    static EMPTY: RefCell<Option<Retained<objc2_ui_kit::UIView>>> = const { RefCell::new(None) };
+}
+
+/// `-inputView` for winit's view: an empty view (no system keyboard) while the number pad is up,
+/// else nil (the system keyboard). The view is kept alive in `EMPTY`.
+extern "C-unwind" fn input_view(_this: *mut AnyObject, _cmd: Sel) -> *mut AnyObject {
+    if !NUMPAD.load(Ordering::Relaxed) {
+        return std::ptr::null_mut();
+    }
+    EMPTY.with(|e| {
+        let mut e = e.borrow_mut();
+        if e.is_none() {
+            *e = MainThreadMarker::new().map(objc2_ui_kit::UIView::new);
+        }
+        e.as_ref().map_or(std::ptr::null_mut(), |v| Retained::as_ptr(v).cast_mut().cast())
+    })
 }
 
 /// `-insertText:` for winit's view. The software keyboard's Return arrives as the text "\n", which
@@ -87,6 +106,12 @@ pub fn install(ctx: &egui::Context) {
         let imp: Imp = std::mem::transmute::<extern "C-unwind" fn(*mut AnyObject, Sel) -> isize, Imp>(keyboard_type);
         class_addMethod(class.cast_mut(), sel!(keyboardType), imp, c"q@:".as_ptr());
     }
+    // SAFETY: adds `-inputView` (returns an object: "@@:") to a class that lacks it (UIResponder's
+    // is inherited, not its own); the function has exactly that signature.
+    unsafe {
+        let imp: Imp = std::mem::transmute::<extern "C-unwind" fn(*mut AnyObject, Sel) -> *mut AnyObject, Imp>(input_view);
+        class_addMethod(class.cast_mut(), sel!(inputView), imp, c"@@:".as_ptr());
+    }
     // SAFETY: replaces `-insertText:` on winit's view class with `insert_text`, keeping the original.
     unsafe {
         let method = class_getInstanceMethod(class, sel!(insertText:));
@@ -128,6 +153,16 @@ pub fn install(ctx: &egui::Context) {
 pub fn set_numeric(numeric: bool) {
     let want = if numeric { NUMBERS_AND_PUNCTUATION } else { DEFAULT };
     if KEYBOARD_TYPE.swap(want, Ordering::Relaxed) == want {
+        return;
+    }
+    if let Some(view) = MainThreadMarker::new().and_then(view) {
+        view.reloadInputViews();
+    }
+}
+
+/// Hold the system keyboard back while the app's number pad is up (and give it back after).
+pub fn set_numpad(on: bool) {
+    if NUMPAD.swap(on, Ordering::Relaxed) == on {
         return;
     }
     if let Some(view) = MainThreadMarker::new().and_then(view) {
