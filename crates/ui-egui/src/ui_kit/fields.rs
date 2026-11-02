@@ -12,7 +12,9 @@ use egui::{Response, RichText, Ui, vec2};
 /// ([`crate::numeric_focus`]). Called by the kit's number and expression fields.
 pub(crate) fn mark_numeric(ctx: &egui::Context, response: &Response) {
     if response.has_focus() {
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(crate::NUMERIC_FOCUS), ctx.cumulative_frame_nr()));
+        // Read the frame number first: the context is locked while `data_mut` runs.
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(crate::NUMERIC_FOCUS), frame));
     }
 }
 
