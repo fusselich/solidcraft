@@ -18,6 +18,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Diagnose: laeuft ueberhaupt ein GitHub-Rechner fuer diesen Fork? (dauert Sekunden)
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Linux-Runner funktioniert"
+
   ipa:
     runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 180
