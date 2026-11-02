@@ -6,6 +6,12 @@ on:
   push:
     branches: [ipad/fork-publish]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "macOS-Runner (bei 'not acquired'-Fehlern einen anderen probieren)"
+        type: choice
+        default: macos-15
+        options: [macos-15, macos-26, macos-latest]
 
 concurrency:
   group: ios-ipa-${{ github.ref }}
@@ -13,7 +19,7 @@ concurrency:
 
 jobs:
   ipa:
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 180
     env:
       BUNDLE_ID: com.solidcraft.ipad
@@ -23,7 +29,8 @@ jobs:
 
       - name: Neuestes Xcode waehlen
         run: |
-          XC=$(ls -d /Applications/Xcode_*.app | grep -v beta | sort -V | tail -1)
+          # Hoechstes Xcode 26+ (auf macos-15 ist 16.x Standard, 26.x aber installiert)
+          XC=$(ls -d /Applications/Xcode_2[6-9]*.app | grep -v -i beta | sort -V | tail -1)
           echo "Verwende $XC"
           sudo xcode-select -s "$XC/Contents/Developer"
           xcodebuild -version
