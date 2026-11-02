@@ -1001,6 +1001,8 @@ fn edit_box(app: &mut SolveApp, ctx: &egui::Context) {
                     .on_hover_text(crate::i18n::tr("dialog.dimension_insert_hint"));
                 let r = crate::ui_kit::cell_editor(ui, id, &mut e.expr, "", false);
                 crate::theme::TabAccent::number_focus(ui, &r);
+                // A tablet offers its number keyboard for the dimension's value.
+                crate::ui_kit::mark_numeric(ui.ctx(), &r);
                 if r.has_focus() {
                     e.selection = egui::TextEdit::load_state(ctx, id).and_then(|s| s.cursor.char_range());
                 }

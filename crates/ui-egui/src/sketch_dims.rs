@@ -650,6 +650,8 @@ fn boxes(app: &SolveApp, ui: &mut egui::Ui, proj: &Proj, t: &mut Tool) -> Option
                 let fill = if b.locked { tk.accent_soft } else { tk.panel };
                 field_frame.fill(fill).show(ui, |ui| {
                     let r = crate::ui_kit::placement_field(ui, id, &mut b.value, b.label);
+                    // A tablet offers its number keyboard for the value being typed.
+                    crate::ui_kit::mark_numeric(ui.ctx(), &r);
                     // A completion gets first use of forward Tab. Shift+Tab always moves back;
                     // the box reached by egui's generic traversal must not complete its text.
                     let changed =
