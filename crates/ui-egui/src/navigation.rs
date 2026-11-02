@@ -767,6 +767,20 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         let sign = crate::prefs::orbit_sign(app);
         orbit(app, rect, sign * f64::from(raw.shift_pan.x), sign * f64::from(raw.shift_pan.y), hover);
     }
+    // Once the Apple Pencil draws, one finger orbits and a long press opens the menu (`pencil`).
+    let finger_orbit = std::mem::take(&mut app.pencil.orbit);
+    if caps.orbit && finger_orbit != egui::Vec2::ZERO && finger_orbit.is_finite() {
+        app.cancel_view_animation();
+        app.viewport.orbit_free = None;
+        let at = app.pencil.orbit_at;
+        orbit_drag(app, rect, f64::from(finger_orbit.x), f64::from(finger_orbit.y), at, false, true);
+    }
+    if let Some(at) = app.pencil.menu.take() {
+        crate::context_menu::request_open(app, at, crate::context_menu::Target::Viewport);
+    }
+    if app.pencil.busy {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    }
     // A twist of two fingers rolls the view the way they turn, as the 3D mouse's roll does.
     if touch_roll != 0.0 {
         app.viewport.orbit_free = None;

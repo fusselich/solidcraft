@@ -14,6 +14,8 @@ mod ai_data;
 #[cfg(target_os = "ios")]
 mod keyboard;
 #[cfg(target_os = "ios")]
+mod pencil;
+#[cfg(target_os = "ios")]
 mod picker;
 
 use solidcraft_engine::Session;
@@ -78,6 +80,24 @@ impl eframe::App for App {
                 });
             }
         }
+        // The pencil's double tap ends the tool in hand, as Escape does; its squeeze opens the menu.
+        #[cfg(target_os = "ios")]
+        {
+            for _ in 0..pencil::take_taps() {
+                for pressed in [true, false] {
+                    raw.events.push(egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: Some(egui::Key::Escape),
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+            if let Some(at) = pencil::take_squeeze() {
+                self.solve.pencil.open_menu(at);
+            }
+        }
         self.solve.raw_input_hook(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -89,6 +109,7 @@ impl eframe::App for App {
         #[cfg(target_os = "ios")]
         {
             keyboard::install(ui.ctx());
+            pencil::install(ui.ctx());
             let covered = (keyboard::covered() - ui.ctx().input(|i| i.safe_area_insets().0.bottom)).max(0.0);
             safe.max.y = (safe.max.y - covered).max(safe.min.y + 200.0);
         }
@@ -199,6 +220,8 @@ fn run() -> eframe::Result {
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let files = files::Files::default();
             let mut app = SolveApp::new(Session::default(), files.services());
+            // Apple Pencil draws, fingers navigate (from the pencil's first touch on).
+            app.pencil.enabled = true;
             if let Some(prefs) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                 app.load_prefs(&prefs);
             }
