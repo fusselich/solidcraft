@@ -121,12 +121,11 @@ impl eframe::App for App {
         self.solve.ui(&mut inner);
         // Number fields get the app's number pad (an iPad has no number keyboard); ABC on it
         // gives the field the system keyboard, in its numbers layout.
-        let numeric = solidcraft_ui_egui::numeric_focus(ui.ctx());
-        let _pad = self.numpad.show(ui.ctx(), safe, numeric);
+        let (_pad, _numeric) = self.numpad.show(ui.ctx(), safe, solidcraft_ui_egui::numeric_focus(ui.ctx()));
         #[cfg(target_os = "ios")]
         {
             keyboard::set_numpad(_pad);
-            keyboard::set_numeric(numeric);
+            keyboard::set_numeric(_numeric);
         }
         self.files.show(ui.ctx());
         #[cfg(target_os = "ios")]
