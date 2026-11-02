@@ -1,0 +1,92 @@
+# Baut eine unsignierte IPA von SolidCraft fuer iPad/iPhone (Installation per SideStore).
+# Ablage im Fork: .github/workflows/ios-ipa.yml auf dem Branch ipad/fork-publish
+name: iOS IPA (unsigniert)
+
+on:
+  push:
+    branches: [ipad/fork-publish]
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "macOS-Runner (bei 'not acquired'-Fehlern einen anderen probieren)"
+        type: choice
+        default: macos-15
+        options: [macos-15, macos-26, macos-latest]
+
+concurrency:
+  group: ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Diagnose: laeuft ueberhaupt ein GitHub-Rechner fuer diesen Fork? (dauert Sekunden)
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Linux-Runner funktioniert"
+
+  ipa:
+    runs-on: ${{ inputs.runner || 'macos-15' }}
+    timeout-minutes: 180
+    env:
+      BUNDLE_ID: com.solidcraft.ipad
+      DEVELOPMENT_TEAM: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Neuestes Xcode waehlen
+        run: |
+          # Hoechstes Xcode 26+ (auf macos-15 ist 16.x Standard, 26.x aber installiert)
+          XC=$(ls -d /Applications/Xcode_2[6-9]*.app | grep -v -i beta | sort -V | tail -1)
+          echo "Verwende $XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+          # Ab Xcode 26 ist der Metal-Compiler (fuer die MLX-Shader) ein eigener Download
+          xcodebuild -downloadComponent MetalToolchain || true
+
+      - name: Rust und xcodegen einrichten
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios
+          brew install xcodegen
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ios-aarch64
+
+      - name: Xcode-Projekt erzeugen
+        working-directory: apps/solidcraft-ios/ios-device
+        run: xcodegen generate
+
+      - name: Bauen (ohne Signatur)
+        working-directory: apps/solidcraft-ios/ios-device
+        run: |
+          set -o pipefail
+          xcodebuild -project SolidCraft.xcodeproj -scheme SolidCraft -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            -skipMacroValidation -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: .*Rust|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: IPA verpacken
+        working-directory: apps/solidcraft-ios/ios-device
+        run: |
+          APP=build/Build/Products/Release-iphoneos/solidcraft-ios.app
+          test -x "$APP/solidcraft-ios"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out && zip -qry ../SolidCraft.ipa Payload
+          ls -lh ../SolidCraft.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SolidCraft-ipa
+          path: apps/solidcraft-ios/ios-device/SolidCraft.ipa
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: apps/solidcraft-ios/ios-device/build.log
